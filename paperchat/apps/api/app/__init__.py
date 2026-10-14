@@ -1,0 +1,1 @@
+"""PaperChat API application."""
