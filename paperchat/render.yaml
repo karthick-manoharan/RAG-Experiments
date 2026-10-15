@@ -1,0 +1,33 @@
+# Select paperchat/render.yaml as the Blueprint path in the parent repository.
+services:
+  - type: web
+    name: paperchat-api
+    runtime: python
+    plan: free
+    rootDir: paperchat/apps/api
+    buildCommand: uv sync --frozen --no-dev
+    startCommand: .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.12
+      - key: UV_VERSION
+        value: 0.12.10
+      - key: APP_NAME
+        value: PaperChat API
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: QDRANT_COLLECTION
+        sync: false
+      - key: EMBEDDINGS_PROVIDER
+        value: openrouter
+      - key: EMBEDDINGS_MODEL
+        sync: false

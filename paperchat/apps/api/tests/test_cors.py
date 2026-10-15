@@ -1,12 +1,21 @@
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import create_app
+from app.settings import Settings
+
+app = create_app(
+    Settings(
+        _env_file=None,
+        cors_allowed_origins=["http://localhost:3000", "https://paperchat.vercel.app"],
+    )
+)
 
 
 def test_local_preflight_and_disallowed_origins():
     with TestClient(app) as client:
         for origin, allowed in [
             ("http://localhost:3000", True),
+            ("https://paperchat.vercel.app", True),
             ("https://other.example", False),
         ]:
             response = client.options(

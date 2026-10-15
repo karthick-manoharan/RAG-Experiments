@@ -260,6 +260,7 @@ def text_deltas(chunk):
 
 async def events(prepared: Prepared) -> AsyncIterator[bytes]:
     iterator, count, first, outcome = None, 0, None, "cancelled"
+    has_answer = False
     try:
         yield sse("sources", {"sources": prepared.sources})
         if prepared.chain is None:
@@ -276,6 +277,7 @@ async def events(prepared: Prepared) -> AsyncIterator[bytes]:
                         for text in text_deltas(chunk):
                             if first is None:
                                 first = time.monotonic() - prepared.started
+                            has_answer = has_answer or bool(text.strip())
                             count += 1
                             yield sse("token", {"text": text})
             except TimeoutError:
@@ -292,6 +294,16 @@ async def events(prepared: Prepared) -> AsyncIterator[bytes]:
                     {
                         "code": outcome,
                         "message": "Unable to generate an answer. Please try again.",
+                    },
+                )
+                return
+            if not has_answer:
+                outcome = "empty_response"
+                yield sse(
+                    "error",
+                    {
+                        "code": outcome,
+                        "message": "The model returned no answer. Please try again.",
                     },
                 )
                 return

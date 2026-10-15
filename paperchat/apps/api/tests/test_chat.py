@@ -641,3 +641,38 @@ def test_route_generation_events(monkeypatch, texts, error, terminal):
         assert chain.closed == 1
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "texts", [(), ("",), ([{"type": "reasoning", "text": "hidden"}],), (" ", "\n\t")]
+)
+def test_empty_answer_is_error_and_closes_resources(texts):
+    async def run():
+        chain = Chain(texts=texts)
+
+        class Client:
+            closed = 0
+
+            async def aclose(self):
+                self.closed += 1
+
+        client = Client()
+        prepared = await service.prepare(
+            "q",
+            settings_loader=loader(),
+            search=lambda *_: [(doc(), 1)],
+            chain_factory=factory(chain, client),
+        )
+        result = decode([body async for body in service.events(prepared)])
+        assert result[0][0] == "sources"
+        assert result[-1] == (
+            "error",
+            {
+                "code": "empty_response",
+                "message": "The model returned no answer. Please try again.",
+            },
+        )
+        assert all(event != "done" for event, _ in result)
+        assert chain.closed == client.closed == 1
+
+    asyncio.run(run())

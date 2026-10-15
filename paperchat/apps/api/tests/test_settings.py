@@ -55,3 +55,36 @@ def test_setting_controls_fastapi_title(
     finally:
         monkeypatch.delenv("APP_NAME")
         importlib.reload(app.main)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "*",
+        "https://*.vercel.app",
+        "https://example.com/",
+        "https://example.com/path",
+        "https://user:pass@example.com",
+        "https://example.com?x=1",
+        "https://example.com#fragment",
+        "file:///tmp",
+        "https://example.com:bad",
+        "",
+    ],
+)
+def test_invalid_cors_origins(origin):
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, cors_allowed_origins=[origin])
+
+
+def test_cors_json_environment(monkeypatch):
+    monkeypatch.setenv(
+        "CORS_ALLOWED_ORIGINS",
+        '["https://paperchat.vercel.app","http://localhost:3000"]',
+    )
+    assert Settings(_env_file=None).cors_allowed_origins == [
+        "https://paperchat.vercel.app",
+        "http://localhost:3000",
+    ]

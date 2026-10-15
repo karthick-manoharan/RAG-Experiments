@@ -55,3 +55,34 @@ def test_health_without_chat(monkeypatch):
             assert (await client.get("/health")).json() == {"status": "ok"}
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("configured", [False, True])
+def test_startup_and_safe_configuration_failure(monkeypatch, caplog, configured):
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+    from app.settings import Settings
+
+    monkeypatch.setitem(ChatSettings.model_config, "env_file", None)
+    from app.ingestion.settings import IngestionSettings
+
+    monkeypatch.setitem(IngestionSettings.model_config, "env_file", None)
+    for key in ("OPENROUTER_MODEL", "OPENROUTER_API_KEY", "QDRANT_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    if configured:
+        monkeypatch.setenv("OPENROUTER_MODEL", "test/model")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sentinel-secret")
+    with (
+        caplog.at_level(logging.INFO),
+        TestClient(create_app(Settings(_env_file=None))) as client,
+    ):
+        assert client.get("/health").json() == {"status": "ok"}
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "sentinel-invalid-value")
+        response = client.post("/api/v1/chat/stream", json={"question": "q"})
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "configuration_unavailable"
+        assert "sentinel" not in response.text
+    assert "sentinel" not in caplog.text

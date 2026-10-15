@@ -1,3 +1,5 @@
+import { resolveApiBaseUrl } from "./api-url";
+
 export type Source = {
   id: string;
   document_id: string | null;
@@ -107,9 +109,10 @@ export async function streamChat(
   const validation = questionError(question);
   if (validation) throw new StreamError(validation);
   signal.throwIfAborted();
-  const base = (
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000"
-  ).replace(/\/+$/, "");
+  const base = resolveApiBaseUrl(
+    process.env.NEXT_PUBLIC_API_BASE_URL,
+    process.env.NODE_ENV === "production",
+  );
   const response = await fetch(`${base}/api/v1/chat/stream`, {
     method: "POST",
     headers: {
