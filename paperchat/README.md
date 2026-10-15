@@ -43,12 +43,13 @@ Run checks from `apps/web`:
 ```sh
 npm test
 npm run lint
-npm run typecheck
-npm run build
+NEXT_PUBLIC_API_BASE_URL=https://api.example.com npm run typecheck
+NEXT_PUBLIC_API_BASE_URL=https://api.example.com npm run build
 ```
 
-Typecheck generates route types before running TypeScript, so it works before a
-production build. To serve the production build locally, stop the development
+Typecheck generates route types before running TypeScript. Next uses the production
+configuration phase for type generation too, so supply the non-secret HTTPS URL
+for both typecheck and production build. To serve the production build locally, stop the development
 server and run:
 
 ```sh
@@ -100,7 +101,7 @@ To run without development reload, stop the development server and run:
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-A future hosting service will supply its own bind port.
+Render supplies its own `PORT`; see production deployment below.
 
 ## Paper ingestion and CLI search
 
@@ -252,9 +253,8 @@ uv run pytest
 See [the architecture document](docs/architecture.md) for ingestion, retrieval,
 generation, and streaming behavior. Frontend rendering and API health require no
 external services; ingestion/search and grounded chat require embeddings and Qdrant,
-and chat generation additionally requires a configured OpenRouter model. Future Vercel hosting
-will use `apps/web` as its app root; Render will
-use `apps/api`. Deployment configuration and CI are deferred.
+and chat generation additionally requires a configured OpenRouter model. Vercel hosting
+uses `paperchat/apps/web` as its app root; Render uses `paperchat/apps/api`. See production deployment below.
 
 ## Streaming chat configuration
 
@@ -403,7 +403,7 @@ data: {"code": "generation_failed", "message": "Unable to generate an answer. Pl
 
 ```
 
-Other late codes are `generation_timeout` and `stream_failed`; no done follows
+Other late codes are `empty_response`, `generation_timeout` and `stream_failed`; no done follows
 an error. Disconnect cancels pending generation and closes request-owned streams
 and HTTP clients without sending a terminal event. Safe logs record correlation,
 stage, elapsed time, retrieval/delta counts, first-token time, and outcome; they
@@ -444,3 +444,231 @@ Automated frontend tests use controlled streams for parsing, incremental renderi
 HTTP/SSE errors, cancellation, retry, keyboard and scroll behavior. Backend checks
 include explicit CORS preflight, successful streams, errors, and rejected origins.
 Live retrieval/provider verification requires configured services and may incur usage.
+
+## Production settings reference
+
+Backend variables are read from process environment, then `apps/api/.env`.
+Chat/provider settings remain lazy; `/health` is process liveness only.
+
+| Variable | Default | Constraints / production value |
+| --- | --- | --- |
+| `APP_NAME` | PaperChat API | Application title |
+| `CORS_ALLOWED_ORIGINS` | `["http://localhost:3000"]` | JSON list of exact HTTP(S) origins; no wildcard, credentials, path, query or fragment |
+| `OPENROUTER_API_KEY` | Required for chat/embeddings | Nonblank secret, shared by both clients |
+| `OPENROUTER_MODEL` | Required for chat | Nonblank supported chat model ID |
+| `OPENROUTER_TEMPERATURE` | 0 | Finite 0–2 |
+| `OPENROUTER_MAX_TOKENS` | 1024 | Integer 1–32768 |
+| `OPENROUTER_TIMEOUT_SECONDS` | 60 | Finite seconds >0 and ≤600 |
+| `RAG_RETRIEVAL_TIMEOUT_SECONDS` | 60 | Finite seconds >0 and ≤600 |
+| `EMBEDDINGS_PROVIDER` | openrouter | Only `openrouter` supported |
+| `EMBEDDINGS_MODEL` | openai/text-embedding-3-small | Nonblank; must match original ingestion identity |
+| `QDRANT_URL` | http://localhost:6333 | Production: existing cluster HTTPS URL; no credentials/query/fragment |
+| `QDRANT_API_KEY` | Unset | Cloud secret; use collection-scoped read access for runtime when available |
+| `QDRANT_COLLECTION` | paperchat-papers | Nonblank existing collection name |
+
+For example, Render's `CORS_ALLOWED_ORIGINS` value can be
+`["https://your-project.vercel.app","http://localhost:3000"]`.
+Keep the existing Qdrant Cloud collection, embedding provider/model/endpoint and
+vector identity from ingestion. Do not recreate, re-embed, or change collection
+data when deploying. Set secrets through host environment controls, never public
+frontend variables. Platform `PORT`, `PYTHON_VERSION`, and `UV_VERSION` are
+separate from application settings.
+
+## Production deployment
+
+### Vercel frontend
+
+Connect the repository manually in Vercel Hobby, choose **Next.js**, Root Directory
+`paperchat/apps/web`, Node **22.x**, install command `npm ci`, build command `npm run build`,
+and leave Output Directory at the framework default. No `vercel.json` is needed.
+Set `NEXT_PUBLIC_API_BASE_URL` to the deployed HTTPS Render origin in **Production**
+and separately in **Preview** if previews are used. Do not use the localhost value
+from `.env.example` for production. Missing, blank, malformed, non-HTTPS, loopback,
+credential/query/fragment URLs fail production builds. Trailing slashes normalize.
+Public variables are frozen into the browser bundle: rebuild/redeploy after any
+change. Exact preview frontend origins must also be deliberately listed in backend
+CORS; there is no wildcard preview access.
+
+Offline build validation from `apps/web`:
+
+```sh
+NEXT_PUBLIC_API_BASE_URL='' npm run build # expected configuration failure
+NEXT_PUBLIC_API_BASE_URL=https://api.example.com npm run build
+```
+
+The example HTTPS URL checks compilation only; it is not a live service.
+
+### Empty-answer troubleshooting
+
+A provider stream with no chunks, metadata only, or whitespace only now returns
+`empty_response` after sources and never `done`. Whitespace deltas may arrive
+before that error; they do not establish success. Valid text still streams
+immediately. Inspect safe generation logs for outcome and delta counts, then
+check the configured model's text-stream support, account quota and provider
+status. Do not print keys, prompts or raw provider responses in logs.
+
+The earlier Phase 04 live check returned five sources and done with zero tokens
+(see [the verification record](docs/streaming-chat-verification.md)). Its cause
+remains unconfirmed. The guard prevents false success; passing mocked tests does
+not establish that the live provider now produces an answer or valid citations.
+
+### Render backend
+
+The Git repository root is `rag-experiments`; this README is inside `paperchat/`.
+Local commands in this README start from `paperchat/` unless stated otherwise.
+Connect the parent repository in Render and create a Blueprint with custom path
+`paperchat/render.yaml`. Review the selected free service plan and cold-start
+behavior before creation. For a manually created native Python Web Service, use:
+
+| Setting | Value |
+| --- | --- |
+| Root Directory | `paperchat/apps/api` |
+| Build Command | `uv sync --frozen --no-dev` |
+| Start Command | `.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Health Check Path | `/health` |
+| `PYTHON_VERSION` | `3.12.12` |
+| `UV_VERSION` | `0.12.10` |
+
+Render supplies `PORT`. Commands run from the service root. The direct virtualenv
+start command avoids installing dependencies at startup. There is no Docker,
+local Qdrant, disk, PDF, pre-deploy command, or deployment-time ingestion.
+
+Enter the shared `OPENROUTER_API_KEY`, chosen `OPENROUTER_MODEL`, existing HTTPS
+Cloud `QDRANT_URL`, `QDRANT_API_KEY`, exact `QDRANT_COLLECTION`, and original
+`EMBEDDINGS_MODEL` through Render's environment UI. The Blueprint prompts for
+these owner-supplied values (`sync: false`); no real secrets belong in YAML.
+Use the same embedding identity as the existing collection. Runtime needs read
+access only where collection-scoped Cloud permissions are available. Leave the
+application timeout/output defaults or set the bounded overrides in the settings
+table. Set `CORS_ALLOWED_ORIGINS` to the exact Vercel HTTPS origin, optionally
+including `http://localhost:3000`. Redeploy the API after changing settings.
+
+Deploy the API first and record its HTTPS URL, then configure Vercel's public
+API URL and deploy the frontend. Add the final Vercel origin to Render CORS and
+redeploy the API if necessary. `/health` returning 200 proves process liveness
+only; chat can still fail because of configuration, collection, quota or provider
+issues. Inspect Render's Linux build/start logs before accepting deployment.
+
+Configuration references checked during implementation:
+[Blueprint fields](https://render.com/docs/blueprint-spec),
+[monorepo roots](https://render.com/docs/monorepo-support),
+[Python version](https://render.com/docs/python-version), and
+[uv version](https://render.com/docs/uv-version).
+
+### Public endpoint limits
+
+The chat endpoint is unauthenticated and can incur provider charges. CORS limits
+browser access; direct HTTP clients bypass it. Questions are bounded to 4000
+characters; generation defaults to 1024 output tokens (maximum 32768), and
+retrieval/generation have separate 60-second default deadlines (maximum 600).
+Safe errors, cancellation and secret-free diagnostics remain in place.
+The four-worker retrieval admission bound controls resources within one process.
+It is not distributed rate protection. This phase has no reliable distributed
+request rate limiter. Set restricted OpenRouter key budgets, available account
+spending controls and alerts, monitor usage, and consider an external gateway
+with request rate limits for sustained public exposure.
+
+## Continuous integration
+
+The single workflow is at `rag-experiments/.github/workflows/ci.yml`, outside the
+PaperChat folder because GitHub only discovers workflows at the repository root.
+It runs frontend/backend jobs for pull requests and pushes to `main`, with
+read-only contents permissions and lockfile-based npm/uv caches. It installs
+Node 22, Python from `paperchat/apps/api/.python-version`, and pinned uv 0.12.10.
+No provider secrets, local PDF, running Qdrant, ingestion or paid API calls are
+required. Tests use mocks and create their own document fixtures.
+
+Equivalent commands, starting at the **parent Git repository root**:
+
+```sh
+cd paperchat/apps/web
+npm ci
+npm run lint
+NEXT_PUBLIC_API_BASE_URL=https://api.example.com npm run typecheck
+npm test
+NEXT_PUBLIC_API_BASE_URL=https://api.example.com npm run build
+```
+
+In a separate shell starting at that same parent root:
+
+```sh
+cd paperchat/apps/api
+uv sync --frozen
+uv run --frozen ruff check .
+uv run --frozen ruff format --check .
+uv run --frozen pytest
+uv run --frozen python -c 'from app.main import app; assert app'
+```
+
+These are validation commands; the example API address is a non-secret build
+placeholder and does not establish connectivity. Render installs production
+packages with `--no-dev`; CI includes the test/lint dependency group. Commit both
+lockfiles unchanged unless dependencies intentionally change.
+
+## Hosted acceptance and rollback
+
+After connecting both hosts and entering real settings, replace the example
+values below with the deployed URLs. Run these from any directory; origin values
+have no trailing slash. Real chat requests use the owner's provider quota.
+
+```sh
+API_URL=https://your-api.onrender.com
+WEB_ORIGIN=https://your-project.vercel.app
+curl --fail-with-body "$API_URL/health"
+curl -i -X OPTIONS "$API_URL/api/v1/chat/stream" \
+  -H "Origin: $WEB_ORIGIN" \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type'
+curl -i -X OPTIONS "$API_URL/api/v1/chat/stream" \
+  -H 'Origin: https://denied.example' \
+  -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type'
+curl -i -N "$API_URL/api/v1/chat/stream" \
+  -H "Origin: $WEB_ORIGIN" -H 'Content-Type: application/json' \
+  -d '{"question":"How does multi-head attention work?"}'
+curl -i "$API_URL/api/v1/chat/stream" \
+  -H "Origin: $WEB_ORIGIN" -H 'Content-Type: application/json' \
+  -d '{"question":"   "}'
+```
+
+Health must return 200 and `{"status":"ok"}`. Allowed preflight must return 200,
+exact `Access-Control-Allow-Origin`, POST and Content-Type permission, and no
+credential permission. Denied preflight must return 400 without allow-origin.
+The invalid question must return readable safe 422 JSON with allow-origin.
+For chat, verify sources first, actual nonblank text deltas arriving before the
+single `done`, and source IDs/pages that support the answer's citations. Sources
+alone, an empty answer, or a final error do not pass acceptance. `curl -N` disables
+client buffering; check elapsed arrival in the browser as well.
+
+Open the deployed Vercel app with browser DevTools Network visible:
+
+1. Submit the supported question and an unsupported question. Confirm requests go
+   directly to the Render HTTPS URL with no localhost targets, and text renders
+   while the response is pending. Inspect real snippets/pages and citations;
+   unsupported answers should acknowledge insufficient context.
+2. Stop while loading and while generating. Check that the request is cancelled,
+   partial text stays incomplete, and a subsequent question can be submitted.
+3. Check safe error rendering using a deliberately invalid model configuration
+   only on an isolated preview/test service; restore settings afterward. A blank
+   model gives safe 503 `configuration_unavailable`; late timeout/provider errors
+   and `empty_response` must keep partial text failed without `done`. Confirm
+   error responses carry the configured origin header. Inspect safe host logs.
+4. Record tested URLs, commit/deployment IDs, first-text arrival, answer/source/
+   citation results and cancellation/error outcomes without recording secrets.
+
+If health succeeds but chat fails, check lazy runtime settings and the existing
+collection/embedding identity, Cloud read permissions, provider model/quota and
+network availability. If the browser alone fails, check exact CORS origins and
+rebuild after changing `NEXT_PUBLIC_API_BASE_URL`. For delayed text inspect host
+cold starts/proxy buffering. For `empty_response`, follow the troubleshooting
+section above; the earlier zero-token live symptom remains unverified.
+
+To roll back, select the previous known working Render deployment/commit and
+restore its matching runtime settings; select the matching prior Vercel deployment
+or rebuild that commit. Restore the backend API URL and CORS origins together.
+A changed public URL requires a fresh frontend build. Recheck health, preflight,
+streaming, citations and cancellation. Do not recreate, re-embed or alter the
+Qdrant collection during rollback.
+
+Actual implementation check results and outstanding hosted prerequisites are
+recorded in [production verification](docs/production-verification.md).
