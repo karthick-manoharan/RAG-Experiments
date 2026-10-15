@@ -84,6 +84,10 @@ describe("SSE", () => {
   });
 });
 describe("fetch client", () => {
+  beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", undefined);
+  });
   it("delivers tokens before completion and sends only the current question", async () => {
     const c = controlled(),
       emit = vi.fn(),
