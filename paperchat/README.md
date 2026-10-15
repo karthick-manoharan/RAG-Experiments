@@ -1,7 +1,7 @@
 # PaperChat
 
-A foundation for a research-paper reading companion. The web app currently
-renders a static page. A standalone Python CLI indexes and searches paper PDFs;
+A research-paper reading companion. The responsive web app streams answers
+about “Attention Is All You Need” and displays retrieved source references. A standalone Python CLI indexes and searches paper PDFs;
 a streaming API generates answers grounded in retrieved passages.
 
 ## Repository layout
@@ -31,14 +31,17 @@ npm ci
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). The frontend runs independently
-of the backend and requires no credentials or environment file. Optionally copy
-the comment-only example with `cp .env.example .env.local`. Never store secrets in
+Open [http://localhost:3000](http://localhost:3000). The frontend starts independently and requires no credentials. Chat calls FastAPI
+directly; real answers require the backend chat configuration and indexed paper
+described below. Optionally run `cp .env.example .env.local` to set
+`NEXT_PUBLIC_API_BASE_URL` (default `http://localhost:8000`). Public values are
+inlined at build time; rebuild after changing them. Never store secrets in
 `NEXT_PUBLIC_*` values, which are exposed to the browser.
 
 Run checks from `apps/web`:
 
 ```sh
+npm test
 npm run lint
 npm run typecheck
 npm run build
@@ -247,8 +250,9 @@ uv run pytest
 ## Planned architecture and hosting
 
 See [the architecture document](docs/architecture.md) for ingestion, retrieval,
-generation, and streaming behavior. The API and web foundation requires no external
-services; ingestion/search requires embeddings and Qdrant. Future Vercel hosting
+generation, and streaming behavior. Frontend rendering and API health require no
+external services; ingestion/search and grounded chat require embeddings and Qdrant,
+and chat generation additionally requires a configured OpenRouter model. Future Vercel hosting
 will use `apps/web` as its app root; Render will
 use `apps/api`. Deployment configuration and CI are deferred.
 
@@ -409,3 +413,34 @@ Automated verification is offline: mocks cover configuration, read-only retrieva
 SSE ordering/framing, provider failure, total deadlines, and direct ASGI delivery
 before completion/disconnect cleanup. These checks make no paid calls. The live
 curl commands above are optional operator checks of provider behavior and grounding.
+
+## Browser chat verification
+
+Start the frontend with `cd apps/web && npm ci && npm run dev` and the API in
+a separate terminal with `cd apps/api && uv sync --frozen && uv run uvicorn app.main:app --reload --port 8000`.
+Use http://localhost:3000: CORS explicitly allows this origin, POST and Content-Type,
+without credentials. Other frontend origins require a deliberate allowlist change;
+there is no wildcard production access and no Next.js API proxy.
+
+1. Configure backend chat/embedding settings, ingest the paper, and verify CLI search
+   using the existing instructions. Health alone does not establish RAG readiness.
+2. Open the chat and select an example or type a question. Enter sends; Shift+Enter
+   inserts a newline. Observe Loading, Generating, and Completed, with text arriving
+   before completion. Expand retrieved sources to inspect supplied IDs and snippets.
+   Pages are actual one-based backend metadata; missing pages stay unknown.
+3. Ask another question and confirm both exchanges remain. Network request bodies
+   contain only the current question, never previous history. Reload clears history.
+4. Stop generating while loading and during generation. The request is aborted and
+   any partial text remains marked incomplete. An already running synchronous
+   retrieval call may finish under backend timeouts, but cancelled retrieval never
+   starts generation. Submit another question after cancellation.
+5. Scroll upward during streaming; the page should let you read previous answers.
+   Return to the bottom to resume following. Test at desktop and mobile widths.
+6. Stop the API to see a connection error; restart it and retry the original question.
+   Missing backend configuration produces a readable service error. Late SSE errors
+   retain partial text with Failed status. Duplicate submissions are blocked.
+
+Automated frontend tests use controlled streams for parsing, incremental rendering,
+HTTP/SSE errors, cancellation, retry, keyboard and scroll behavior. Backend checks
+include explicit CORS preflight, successful streams, errors, and rejected origins.
+Live retrieval/provider verification requires configured services and may incur usage.

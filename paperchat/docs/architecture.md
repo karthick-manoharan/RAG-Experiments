@@ -3,7 +3,7 @@
 ## Implemented foundation
 
 `apps/web` is a Next.js App Router application with TypeScript, Tailwind CSS,
-and a shadcn/ui Button on a static foundation page. It makes no backend calls.
+and shadcn/ui components for a responsive streaming chat page. It calls FastAPI directly.
 `apps/api` is a Python 3.12 FastAPI application with typed app-name settings and
 `GET /health`, which reports process availability with `{"status":"ok"}`.
 Each app has its own manifest and lockfile and can run independently.
@@ -56,8 +56,8 @@ mocked unsupported answer, not real-world grounding. Operator checks should ask
 yesterday?” against the indexed paper. No guessed similarity threshold is used.
 
 Chat settings load on requests, preserving credential-free startup and health.
-The web app remains static; a chat interface and conversation history are future
-work. The API is usable directly through the documented curl commands.
+The web app consumes this endpoint directly; the API is also usable through the
+documented curl commands.
 
 ## Future hosting and automation
 
@@ -123,3 +123,25 @@ retrieval and generation passed direct ASGI incremental-token and idle-disconnec
 tests, plus HTTP framing, failure, timeout, and cleanup checks. No Qdrant network
 requests or paid provider calls were made. Live curl/provider grounding checks
 remain optional operator verification, separate from this offline evidence.
+
+## Browser streaming chat
+
+A server page renders a client chat view. `src/lib/chat/stream.ts` owns runtime
+contract checks, incremental SSE parsing and fetch with a JSON question body. A
+streaming TextDecoder preserves split Unicode; incomplete lines/frames remain
+buffered across reads. Only done completes an answer. HTTP errors, SSE errors and
+unexpected EOF fail the request without losing history or partial text.
+
+`use-chat.ts` owns session exchanges, an AbortController and a synchronous request
+lock. Loading precedes first text, generating appends text deltas, and completed,
+failed and cancelled are terminal. Request identity prevents stale updates after
+cancel/retry. Retry appends the original question as a new attempt. History lives
+only in mounted state and clears on reload; earlier messages never reach the API.
+Unmount and Stop generating abort fetch and reader consumption. The existing
+backend limitation on interrupting synchronous retrieval remains unchanged.
+
+The view uses escaped text, actual nullable source metadata and compact disclosures.
+It preserves keyboard focus and only follows new text while near the bottom.
+The public API base defaults to localhost:8000; no provider secrets enter the
+browser. FastAPI permits only localhost:3000 cross-origin requests, without
+credentials. No conversational memory, API proxy or deployment changes are added.

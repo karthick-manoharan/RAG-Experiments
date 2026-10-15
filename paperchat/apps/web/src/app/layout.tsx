@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "PaperChat",
-  description: "The foundation for a research-paper reading companion.",
+  description: "Explore Attention Is All You Need with streamed, source-grounded answers.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
